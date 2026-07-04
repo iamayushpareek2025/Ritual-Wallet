@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Ritual Wallet",
+  "version": "1.0.0",
+  "description": "A Chrome Extension Wallet for the Ritual Testnet",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/contentScript.ts"],
+      "run_at": "document_start"
+    }
+  ]
+}

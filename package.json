@@ -1,0 +1,44 @@
+{
+  "name": "ritual-wallet-extension",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@tailwindcss/vite": "^4.3.2",
+    "@tanstack/react-query": "^5.101.2",
+    "@types/crypto-js": "^4.2.2",
+    "clsx": "^2.1.1",
+    "crypto-js": "^4.2.0",
+    "ethers": "^6.17.0",
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-hook-form": "^7.80.0",
+    "react-hot-toast": "^2.6.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.2",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.33",
+    "@types/chrome": "^0.2.0",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0"
+  }
+}
