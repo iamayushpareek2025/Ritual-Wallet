@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { RITUAL_MAINNET, RITUAL_TESTNET } from '../ritual';
 
 interface TxRecord {
   hash: string;
@@ -52,7 +53,7 @@ export const useWalletStore = create<WalletState>((set) => ({
   stakedUsdc: '0.00',
   transactions: [],
   isMainnet: false,
-  rpcUrl: 'https://rpc.ritualfoundation.org',
+  rpcUrl: RITUAL_TESTNET.rpcUrl,
   hasUnreadNotifications: false,
   
   vault: null,
@@ -66,7 +67,7 @@ export const useWalletStore = create<WalletState>((set) => ({
   setTransactions: (txs) => set({ transactions: txs }),
   setNetwork: (isMainnet) => set({ 
     isMainnet, 
-    rpcUrl: isMainnet ? 'https://mainnet.ritualfoundation.org' : 'https://rpc.ritualfoundation.org' 
+    rpcUrl: isMainnet ? RITUAL_MAINNET.rpcUrl : RITUAL_TESTNET.rpcUrl 
   }),
   setHasUnreadNotifications: (unread) => set({ hasUnreadNotifications: unread }),
   

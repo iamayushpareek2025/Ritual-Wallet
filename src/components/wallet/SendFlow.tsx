@@ -9,6 +9,9 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '../../stores/useWalletStore';
 import { useUIStore } from '../../stores/useUIStore';
+import { WalletGuard } from '../../security/walletGuard';
+import type { SecurityReport } from '../../security/transactionRisk';
+import { AlertTriangle, ShieldCheck, ShieldAlert, Activity } from 'lucide-react';
 
 interface SendFlowProps {
   onSend: (recipient: string, amount: string, asset: 'RITUAL'|'USDC') => Promise<void>;
@@ -16,7 +19,7 @@ interface SendFlowProps {
 }
 
 export function SendFlow({ onSend, addressBook = [] }: SendFlowProps) {
-  const { balance, usdcBalance } = useWalletStore();
+  const { balance, usdcBalance, transactions } = useWalletStore();
   const { setActiveTab, sendToken, setCurrentView } = useUIStore();
   
   const [step, setStep] = useState(1);
@@ -24,11 +27,31 @@ export function SendFlow({ onSend, addressBook = [] }: SendFlowProps) {
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [loading, setLoading] = useState(false);
+  const [securityReport, setSecurityReport] = useState<SecurityReport | null>(null);
+  const [isGuarding, setIsGuarding] = useState(false);
+  const [riskAccepted, setRiskAccepted] = useState(false);
 
   const currentBalance = asset === 'RITUAL' ? balance : usdcBalance;
 
-  const handleNext = () => {
-    if (step < 3) setStep(step + 1);
+  const recentContacts = Array.from(new Set(transactions.filter(tx => tx.type === 'send' && tx.to).map(tx => tx.to))).slice(0, 3);
+
+  const handleNext = async () => {
+    if (step === 2 && recipient) {
+      setIsGuarding(true);
+      try {
+        const guard = WalletGuard.getInstance();
+        const txReq = { to: recipient, value: amount }; // Mock transaction request
+        const res = await guard.guardTransaction(txReq as any, useWalletStore.getState().isMainnet);
+        setSecurityReport(res.report);
+      } catch (e) {
+        console.error("Guard error", e);
+      } finally {
+        setIsGuarding(false);
+        setStep(3);
+      }
+    } else if (step < 3) {
+      setStep(step + 1);
+    }
   };
 
   return (
@@ -142,18 +165,41 @@ export function SendFlow({ onSend, addressBook = [] }: SendFlowProps) {
                     </div>
                   ))
                 ) : (
-                  <div className="text-center py-6 text-gray-500 text-sm">
-                    No saved contacts found.<br/> Add contacts in Settings.
-                  </div>
+                  <div className="text-gray-500 text-sm italic px-2">No saved contacts</div>
                 )}
               </div>
 
+              {recentContacts.length > 0 && (
+                <>
+                  <div className="text-sm font-semibold text-gray-400 mt-4 px-2">Recent</div>
+                  <div className="flex flex-col gap-2">
+                    {recentContacts.map((addr, i) => (
+                      <div 
+                        key={`recent-${i}`}
+                        onClick={() => setRecipient(addr)}
+                        className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center gap-3 cursor-pointer hover:bg-white/10 transition"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-gray-400">
+                          <User size={18} />
+                        </div>
+                        <div className="text-white font-medium font-mono">{addr.slice(0, 8)}...{addr.slice(-6)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
               <button 
-                disabled={!recipient}
+                disabled={!recipient || isGuarding}
                 onClick={handleNext}
-                className="w-full py-4 rounded-2xl bg-[#0A84FF] text-white font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed mt-auto hover:brightness-110 transition"
+                className="w-full py-4 rounded-2xl bg-[#0A84FF] text-white font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed mt-auto hover:brightness-110 transition flex items-center justify-center gap-2"
               >
-                Review Transaction
+                {isGuarding ? (
+                   <>
+                     <Activity size={20} className="animate-spin" />
+                     Analyzing Risk...
+                   </>
+                ) : "Review Transaction"}
               </button>
             </motion.div>
           )}
@@ -200,8 +246,41 @@ export function SendFlow({ onSend, addressBook = [] }: SendFlowProps) {
                 </div>
               </div>
 
+              {securityReport && (
+                <div className={`p-4 rounded-xl border flex flex-col gap-2 mt-2 ${
+                  !securityReport.isSafe ? 'bg-red-500/10 border-red-500/30' : 
+                  securityReport.score > 70 ? 'bg-orange-500/10 border-orange-500/30' : 
+                  'bg-[#00FFA3]/10 border-[#00FFA3]/30'
+                }`}>
+                   <div className="flex items-center gap-2 mb-1">
+                     {!securityReport.isSafe ? <ShieldAlert size={18} className="text-red-500" /> : 
+                      securityReport.score > 70 ? <AlertTriangle size={18} className="text-orange-500" /> : 
+                      <ShieldCheck size={18} className="text-[#00FFA3]" />}
+                     <span className={`font-semibold text-sm ${
+                        !securityReport.isSafe ? 'text-red-500' : 
+                        securityReport.score > 70 ? 'text-orange-500' : 
+                        'text-[#00FFA3]'
+                     }`}>
+                       AI Security Analysis (Score: {securityReport.score}/100)
+                     </span>
+                   </div>
+                   {securityReport.warnings.map((w, i) => (
+                      <div key={i} className="text-xs text-red-400 font-medium">• {w}</div>
+                   ))}
+                   {securityReport.explanations.map((e, i) => (
+                      <div key={i} className="text-xs text-gray-300">• {e}</div>
+                   ))}
+                   {(!securityReport.isSafe || securityReport.score >= 70) && (
+                     <div className="mt-2 flex items-center gap-2 border-t border-white/10 pt-2">
+                        <input type="checkbox" id="riskAccept" className="w-4 h-4 rounded bg-white/5 border-white/20 accent-red-500 cursor-pointer" checked={riskAccepted} onChange={(e) => setRiskAccepted(e.target.checked)} />
+                        <label htmlFor="riskAccept" className="text-sm font-semibold text-red-400 cursor-pointer">I understand the risks and wish to proceed.</label>
+                     </div>
+                   )}
+                </div>
+              )}
+
               <button 
-                disabled={loading}
+                disabled={loading || (securityReport ? (!securityReport.isSafe || securityReport.score >= 70) && !riskAccepted : false)}
                 onClick={async () => {
                   setLoading(true);
                   try {

@@ -1,7 +1,7 @@
 import { ActivityScreen } from './components/activity/ActivityScreen';
 import { SettingsScreen } from './components/settings/SettingsScreen';
 import { useState, useEffect, useRef } from 'react';
-import { ethers } from 'ethers';
+
 import CryptoJS from 'crypto-js';
 import { USDC, STAKING } from './contracts';
 import { 
@@ -19,9 +19,16 @@ import { AppShell } from './components/layout/AppShell';
 import { HomeDashboard } from './components/wallet/HomeDashboard';
 import { PortfolioScreen } from './components/portfolio/PortfolioScreen';
 import { SendFlow } from './components/wallet/SendFlow';
+import { WalletService } from './services/wallet.service';
+import { BalanceService } from './services/balance.service';
+import { TransactionService } from './services/transaction.service';
+import { PortfolioService } from './services/portfolio.service';
+import { TokenService } from './services/token.service';
+import { NetworkService } from './services/network.service';
 import { SwapScreen } from './components/swap/SwapScreen';
 import { BridgeScreen } from './components/bridge/BridgeScreen';
 import { AIWorkspace } from './components/ai/AIWorkspace';
+import { DiscoverScreen } from './components/social/DiscoverScreen';
 
 // Global config removed for dynamic rpcUrl
 
@@ -83,14 +90,10 @@ type AddressBookEntry = { name: string; address: string; };
 type ConnectedApp = { domain: string; description: string; connectedAt: number; };
 
 // Gas estimate helper - returns estimated gas cost in RITUAL as string
-const estimateGasCost = async (rpcUrl: string): Promise<string> => {
+const estimateGasCost = async (isMainnet: boolean): Promise<string> => {
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const feeData = await provider.getFeeData();
-    const gasPrice = feeData.gasPrice || ethers.parseUnits('1', 'gwei');
-    // Standard tx = 21000 gas, AI tx = ~500000 gas
-    const stdGas = gasPrice * 21000n;
-    return ethers.formatEther(stdGas);
+    const est = await TransactionService.estimateNativeSend(isMainnet, '0x0000000000000000000000000000000000000000', '0');
+    return est.totalCostEther;
   } catch {
     return '0.0001';
   }
@@ -370,15 +373,13 @@ function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Polling for incoming transactions
+    // Polling for incoming transactions
   useEffect(() => {
     let interval: any;
     if (authState === 'unlocked' && address) {
       interval = setInterval(async () => {
         try {
-          const provider = new ethers.JsonRpcProvider(rpcUrl);
-          const currentBal = await provider.getBalance(address);
-          const currentBalStr = ethers.formatEther(currentBal);
+          const currentBalStr = await BalanceService.getNativeBalance(address, isMainnet);
           if (balanceRef.current !== "0" && Number(currentBalStr) > Number(balanceRef.current)) {
             triggerToast("You received RITUAL!");
             const diff = Number(currentBalStr) - Number(balanceRef.current);
@@ -392,33 +393,31 @@ function App() {
             const updatedHist = [newTx, ...txHistory];
             setTxHistory(updatedHist);
             storage.set({ ritual_txs: updatedHist });
-            useWalletStore.getState().setTransactions(updatedHist as any);
           }
           balanceRef.current = currentBalStr;
           setBalance(currentBalStr);
-        } catch (e) {}
+        } catch {}
       }, 10000);
     }
-    return () => { if (interval) clearInterval(interval); };
-  }, [authState, address, txHistory, rpcUrl]);
+    return () => clearInterval(interval);
+  }, [authState, address, txHistory, isMainnet]);
 
-  // Fetch live network block number for health tab
+    // Fetch live network block number for health tab
   useEffect(() => {
     if (authState !== 'unlocked') return;
     let mounted = true;
     const fetchBlock = async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        const block = await provider.getBlockNumber();
+        const block = await NetworkService.getBlockNumber(isMainnet);
         if (mounted) setNetworkBlock(block);
       } catch {}
     };
     fetchBlock();
     const blockInterval = setInterval(fetchBlock, 15000);
     return () => { mounted = false; clearInterval(blockInterval); };
-  }, [authState, rpcUrl]);
+  }, [authState, isMainnet]);
 
-  // — Gas-Conditional Autonomous Agent polling (every 30s) —
+    // — Gas-Conditional Autonomous Agent polling (every 30s) —
   useEffect(() => {
     if (authState !== 'unlocked' || agentRules.length === 0 || !privateKey) return;
     const checkRules = async () => {
@@ -426,45 +425,46 @@ function App() {
         if (!rule.enabled) continue;
         if (rule.lastTriggered && Date.now() - rule.lastTriggered < 60_000) continue;
         try {
-          const provider = new ethers.JsonRpcProvider(rpcUrl);
           if (rule.condition === 'gas_below') {
-            const feeData = await provider.getFeeData();
-            const gp = feeData.gasPrice ?? 0n;
-            const gasCostEther = parseFloat(ethers.formatEther(gp * 21000n));
+            const est = await TransactionService.estimateNativeSend(isMainnet, rule.to, rule.amount);
+            const gasCostEther = parseFloat(est.totalCostEther);
             if (gasCostEther < parseFloat(rule.threshold)) {
-              if (rule.action === 'send' && ethers.isAddress(rule.to) && parseFloat(rule.amount) > 0) {
+              if (rule.action === 'send' && WalletService.isValidAddress(rule.to) && parseFloat(rule.amount) > 0) {
                 showToast(`⚡ Agent: "${rule.label}" executing...`);
-                const wallet = new ethers.Wallet(privateKey, provider);
-                const tx = await wallet.sendTransaction({ to: rule.to, value: ethers.parseEther(rule.amount) });
+                const result = await TransactionService.sendNative(privateKey, rule.to, rule.amount, isMainnet);
+                if (!result.success) throw new Error(result.error);
+                const tx = { hash: result.hash || '' };
                 const updated = agentRules.map(r => r.id === rule.id ? {...r, lastTriggered: Date.now()} : r);
                 setAgentRules(updated);
                 storage.set({ ritual_agent_rules: updated });
                 const hist = [{ hash: tx.hash, to: rule.to, amount: rule.amount, date: Date.now(), type: 'send' }, ...txHistory];
-                setTxHistory(hist); storage.set({ ritual_txs: hist });
-                showToast(`✅ Agent sent ${rule.amount} RITUAL`);
+                setTxHistory(hist as any);
+                storage.set({ ritual_txs: hist });
+                showToast(`Success! Tx: ${tx.hash.slice(0, 10)}...`);
               }
             }
           }
-        } catch (e) { console.warn('Agent rule error:', e); }
+        } catch (err) {
+          console.error("Agent execution error:", err);
+        }
       }
     };
-    const agentInterval = setInterval(checkRules, 30_000);
-    return () => clearInterval(agentInterval);
-  }, [authState, agentRules, privateKey, rpcUrl, txHistory]);
+    const interval = setInterval(checkRules, 30000);
+    return () => clearInterval(interval);
+  }, [authState, agentRules, privateKey, isMainnet, txHistory]);
 
-  // — Address Safety Check (debounced on sendTo change) —
+    // — Address Safety Check (debounced on sendTo change) —
   useEffect(() => {
-    if (!sendTo || !ethers.isAddress(sendTo)) { setRecipientCheck(null); return; }
+    if (!sendTo || !WalletService.isValidAddress(sendTo)) { setRecipientCheck(null); return; }
     setIsCheckingRecipient(true);
     const timer = setTimeout(async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        const code = await provider.getCode(sendTo);
-        setRecipientCheck({ isContract: code !== '0x' });
+        const isContract = await WalletService.isContractAddress(sendTo, isMainnet);
+        setRecipientCheck({ isContract });
       } catch {} finally { setIsCheckingRecipient(false); }
     }, 800);
     return () => clearTimeout(timer);
-  }, [sendTo, rpcUrl]);
+  }, [sendTo, isMainnet]);
 
   const handleUnlock = () => {
     setAuthError("");
@@ -510,25 +510,25 @@ function App() {
     storage.set({ ritual_last_active: now });
   };
 
-  const setupWallet = async (pk: string) => {
+    const setupWallet = async (pk: string) => {
     setLoading(true);
     try {
-      // Validate private key before instantiating wallet - prevents crash from corrupted/garbled decryption
       if (!pk || !/^0x[0-9a-fA-F]{64}$/.test(pk)) {
         throw new Error(`Invalid private key format: ${pk?.slice(0, 10)}`);
       }
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(pk, provider);
+      const { address: walletAddress } = WalletService.importFromPrivateKey(pk);
       setPrivateKey(pk);
-      setAddress(wallet.address);
-      storage.set({ ritual_active_address: wallet.address });
-      const bal = await provider.getBalance(wallet.address);
-      const balStr = ethers.formatEther(bal);
-      balanceRef.current = balStr;
-      setBalance(balStr);
+      setAddress(walletAddress);
+      storage.set({ ritual_active_address: walletAddress });
+      
+      const { native, usdc, staked } = await BalanceService.getAllBalances(walletAddress, deployedUsdcAddress, deployedStakingAddress, isMainnet);
+      balanceRef.current = native;
+      setBalance(native);
+      setUsdcBalance(usdc);
+      setStakedUsdc(staked);
+      storage.set({ ritual_usdc: usdc, ritual_staked_usdc: staked });
     } catch (e) {
       console.error('setupWallet error:', e);
-      // Clear any stale session data so the app doesn't crash on next load
       storage.remove(['ritual_temp_pass', 'ritual_last_active', 'ritual_active_address']);
     }
     finally { setLoading(false); }
@@ -580,25 +580,23 @@ function App() {
     };
   }, [authState, autoLockTimer, lastActive]);
 
-  const handleCreateWalletStart = () => {
-    const randomWallet = ethers.Wallet.createRandom();
-    setTempVault({ mnemonic: randomWallet.mnemonic!.phrase, accounts: [randomWallet.privateKey] });
+    const handleCreateWalletStart = () => {
+    const randomWallet = WalletService.createRandomWallet();
+    setTempVault({ mnemonic: randomWallet.mnemonic, accounts: [randomWallet.privateKey] });
     setAuthState('show_seed');
   };
 
-  const handleImportSubmit = () => {
+    const handleImportSubmit = () => {
     setAuthError("");
     const input = authImportInput.trim();
     if (!input) { setAuthError("Cannot be empty"); return; }
     try {
       if (input.split(" ").length === 12 || input.split(" ").length === 24) {
-        const wallet = ethers.Wallet.fromPhrase(input);
+        const wallet = WalletService.importFromMnemonic(input);
         setTempVault({ mnemonic: input, accounts: [wallet.privateKey] });
       } else {
-        let pk = input;
-        if (!pk.startsWith('0x')) pk = '0x' + pk;
-        new ethers.Wallet(pk);
-        setTempVault({ mnemonic: null, accounts: [pk] });
+        const wallet = WalletService.importFromPrivateKey(input);
+        setTempVault({ mnemonic: null, accounts: [wallet.privateKey] });
       }
       setAuthState('setup_password');
     } catch (e) { setAuthError("Invalid Phrase or Key"); }
@@ -629,15 +627,14 @@ function App() {
     useWalletStore.getState().setSwitchAccountCallback(switchAccount);
   }, [vault]);
 
-  const addAccount = () => {
+    const addAccount = () => {
     if (!vault || !vault.mnemonic) {
       showToast("Cannot derive accounts from a private key-only wallet. Import a seed phrase to add accounts.");
       return;
     }
     const nextIndex = vault.accounts.length;
-    const path = `m/44'/60'/0'/0/${nextIndex}`;
-    const newWallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(vault.mnemonic), path);
-    const newVault = { ...vault, accounts: [...vault.accounts, newWallet.privateKey] };
+    const derived = WalletService.deriveAccount(vault.mnemonic, nextIndex);
+    const newVault = { ...vault, accounts: [...vault.accounts, derived.privateKey] };
     const encrypted = CryptoJS.AES.encrypt(JSON.stringify(newVault), activePassword).toString();
     storage.set({ ritual_wallet_encrypted: encrypted }, () => {
       setVault(newVault);
@@ -654,34 +651,21 @@ function App() {
   const validateAddressBookEntry = (name: string, address: string) => {
     if (!name.trim()) return 'Name cannot be empty.';
     if (!address.trim()) return 'Address cannot be empty.';
-    if (!ethers.isAddress(address.trim())) return 'Invalid Ethereum address.';
+    if (!WalletService.isValidAddress(address.trim())) return 'Invalid Ethereum address.';
     return '';
   };
 
-  const handleDeployContracts = async () => {
-    if (!privateKey) {
-      showToast("Wallet locked.");
-      return;
-    }
+    const handleDeployContracts = async () => {
+    if (!privateKey) return;
     setLoading(true);
     showToast("Deploying MockUSDC... Please wait.");
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey, provider);
-
-      // Deploy MockUSDC
-      const usdcFactory = new ethers.ContractFactory(USDC.abi, USDC.bytecode, wallet);
-      const usdcContract = await usdcFactory.deploy();
-      await usdcContract.waitForDeployment();
-      const usdcAddr = await usdcContract.getAddress();
+      const usdcAddr = await TokenService.deployMockUsdc(privateKey, isMainnet);
+      if (!usdcAddr) throw new Error("MockUSDC deployment failed");
       
       showToast("Deploying Staking... Please wait.");
-      
-      // Deploy Staking
-      const stakingFactory = new ethers.ContractFactory(STAKING.abi, STAKING.bytecode, wallet);
-      const stakingContract = await stakingFactory.deploy(usdcAddr);
-      await stakingContract.waitForDeployment();
-      const stakingAddr = await stakingContract.getAddress();
+      const stakingAddr = await TokenService.deployMockStaking(privateKey, usdcAddr, isMainnet);
+      if (!stakingAddr) throw new Error("Staking deployment failed");
 
       setDeployedUsdcAddress(usdcAddr);
       setDeployedStakingAddress(stakingAddr);
@@ -692,7 +676,7 @@ function App() {
 
       // Add to activity
       const newHistory = [
-        { hash: stakingContract.deploymentTransaction()?.hash || '0x...', to: "Deploy Contracts", amount: "Gas", date: Date.now(), type: 'send' },
+        { hash: '0x...', to: "Deploy Contracts", amount: "Gas", date: Date.now(), type: 'send' },
         ...txHistory
       ];
       setTxHistory(newHistory);
@@ -713,7 +697,7 @@ function App() {
       setAddressBookValidationError(validation);
       return;
     }
-    const cleanedAddress = ethers.getAddress(addressBookAddress.trim());
+    const cleanedAddress = WalletService.formatAddress(addressBookAddress.trim());
     const newEntry = { name: addressBookName.trim(), address: cleanedAddress };
     const updated = editAddressBookIndex !== null && editAddressBookIndex >= 0 && editAddressBookIndex < addressBook.length
       ? addressBook.map((entry, idx) => idx === editAddressBookIndex ? newEntry : entry)
@@ -786,8 +770,8 @@ function App() {
       let formattedPk = importAccountInput.trim();
       if (!formattedPk.startsWith('0x')) formattedPk = '0x' + formattedPk;
       if (formattedPk.length !== 66) throw new Error('Invalid Private Key length');
-      const newWallet = new ethers.Wallet(formattedPk);
-      const newVault = { ...vault, accounts: [...vault.accounts, newWallet.privateKey] };
+      const walletInfo = WalletService.importFromPrivateKey(formattedPk);
+      const newVault = { ...vault, accounts: [...vault.accounts, walletInfo.privateKey] };
       const encrypted = CryptoJS.AES.encrypt(JSON.stringify(newVault), activePassword).toString();
       storage.set({ ritual_wallet_encrypted: encrypted }, () => {
         setVault(newVault);
@@ -1027,34 +1011,28 @@ function App() {
   const handleSendClick = async () => {
     if (!sendTo || !sendAmount) return;
     setSendError("");
-    if (!ethers.isAddress(sendTo)) { setSendError("Invalid recipient address."); return; }
-    try { ethers.parseEther(sendAmount); } catch { setSendError("Invalid amount."); return; }
+    if (!WalletService.isValidAddress(sendTo)) { setSendError("Invalid recipient address."); return; }
+    try { BalanceService.parseEther(sendAmount); } catch { setSendError("Invalid amount."); return; }
     // Estimate gas
-    const fee = await estimateGasCost(rpcUrl);
+    const fee = await estimateGasCost(isMainnet);
     setEstimatedSendFee(Number(fee).toFixed(6));
     setShowSendFeePopup(true);
   };
 
   // Step 2: Actually send after user confirms
-  const handleSendToken = async () => {
+    const handleSendToken = async () => {
     setShowSendFeePopup(false);
     try {
       setLoading(true); setSendError("");
-      const parsedAmount = ethers.parseEther(sendAmount);
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey!, provider);
-      
-      let tx;
+      let result;
       if (sendToken === 'USDC' && deployedUsdcAddress) {
-        const usdcAbi = ["function transfer(address to, uint256 amount) returns (bool)"];
-        const usdcContract = new ethers.Contract(deployedUsdcAddress, usdcAbi, wallet);
-        tx = await usdcContract.transfer(sendTo, parsedAmount);
+        result = await TransactionService.sendUsdc(privateKey!, sendTo, sendAmount, deployedUsdcAddress, isMainnet);
       } else {
-        tx = await wallet.sendTransaction({ to: sendTo, value: parsedAmount });
+        result = await TransactionService.sendNative(privateKey!, sendTo, sendAmount, isMainnet);
       }
+      if (!result.success) throw new Error(result.error);
       
-      saveTx(tx.hash, sendTo, sendAmount, 'send');
-      await tx.wait();
+      saveTx(result.hash || '', sendTo, sendAmount, 'send');
       setupWallet(privateKey!);
       setSendTo(""); setSendAmount("");
       setCurrentView('main');
@@ -1067,50 +1045,32 @@ function App() {
     finally { setLoading(false); }
   };
 
-  const handleSimulateSwap = async () => {
+    const handleSimulateSwap = async () => {
     if (!swapAmount || Number(swapAmount) <= 0) return;
     
     if (deployedUsdcAddress && privateKey) {
       setLoading(true);
       showToast("Swapping on Ritual Testnet...");
       try {
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        const wallet = new ethers.Wallet(privateKey, provider);
-        const usdc = new ethers.Contract(deployedUsdcAddress, USDC.abi, wallet);
-        
-        const amountToMintOrBurn = ethers.parseUnits(swapAmount, 18);
-
+        let result;
         if (swapDirection === 'RITUAL_TO_USDC') {
-          // Mock RITUAL -> USDC: Mint USDC to user
-          const tx = await usdc.mint(wallet.address, amountToMintOrBurn);
-          await tx.wait();
-          
-          const newUsdcBalance = (Number(usdcBalance) + Number(swapAmount)).toFixed(2);
-          setUsdcBalance(newUsdcBalance);
-          storage.set({ ritual_usdc: newUsdcBalance });
-          
-          const newHistory = [{ hash: tx.hash, to: "USDC Token", amount: `Swap ${swapAmount} RITUAL`, date: Date.now(), type: 'send' }, ...txHistory];
-          setTxHistory(newHistory);
-          storage.set({ ritual_txs: newHistory });
+          result = await TokenService.swapRitualForUsdc(privateKey, swapAmount, deployedUsdcAddress, isMainnet);
         } else {
-          // Mock USDC -> RITUAL: Burn USDC from user
-          // Actually MockUSDC has no burn function for users unless we added it. 
-          // If no burn, we can just transfer it to address(0) or dead address
-          const tx = await usdc.transfer("0x000000000000000000000000000000000000dEaD", amountToMintOrBurn);
-          await tx.wait();
-
-          const newUsdcBalance = (Number(usdcBalance) - Number(swapAmount)).toFixed(2);
-          setUsdcBalance(newUsdcBalance);
-          storage.set({ ritual_usdc: newUsdcBalance });
-
-          // Note: In a real environment, user's RITUAL balance would go up. 
-          // Here, they only lose USDC visually, because testnet RITUAL is hard to mock mint.
-          // But it completes the testnet transaction!
-          
-          const newHistory = [{ hash: tx.hash, to: "Ritual Network", amount: `Swap ${swapAmount} USDC`, date: Date.now(), type: 'send' }, ...txHistory];
-          setTxHistory(newHistory);
-          storage.set({ ritual_txs: newHistory });
+          result = await TokenService.swapUsdcForRitual(privateKey, swapAmount, deployedUsdcAddress, isMainnet);
         }
+        if (!result.success) throw new Error(result.error);
+        
+        const newUsdcBalance = swapDirection === 'RITUAL_TO_USDC'
+          ? (Number(usdcBalance) + Number(swapAmount)).toFixed(2)
+          : (Number(usdcBalance) - Number(swapAmount)).toFixed(2);
+        setUsdcBalance(newUsdcBalance);
+        storage.set({ ritual_usdc: newUsdcBalance });
+        
+        const label = swapDirection === 'RITUAL_TO_USDC' ? `Swap ${swapAmount} RITUAL` : `Swap ${swapAmount} USDC`;
+        const dest = swapDirection === 'RITUAL_TO_USDC' ? "USDC Token" : "Ritual Network";
+        const newHistory = [{ hash: result.hash || '', to: dest, amount: label, date: Date.now(), type: 'send' }, ...txHistory];
+        setTxHistory(newHistory);
+        storage.set({ ritual_txs: newHistory });
         
         showToast("Swap successful!");
       } catch (e: any) {
@@ -1125,7 +1085,7 @@ function App() {
     setSwapAmount("");
   };
 
-  const handleStakeUsdc = async () => {
+    const handleStakeUsdc = async () => {
     if (!stakeInput || Number(stakeInput) <= 0) return;
     if (!deployedUsdcAddress || !deployedStakingAddress || !privateKey) {
       showToast("Please deploy Demo Contracts from Settings first.");
@@ -1134,23 +1094,9 @@ function App() {
     setLoading(true);
     showToast("Approving & Staking USDC...");
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey, provider);
+      const result = await TokenService.stakeUsdc(privateKey, stakeInput, deployedUsdcAddress, deployedStakingAddress, isMainnet);
+      if (!result.success) throw new Error(result.error);
       
-      const usdc = new ethers.Contract(deployedUsdcAddress, USDC.abi, wallet);
-      const staking = new ethers.Contract(deployedStakingAddress, STAKING.abi, wallet);
-      
-      const amountToStake = ethers.parseUnits(stakeInput, 18);
-      
-      // 1. Approve
-      let tx = await usdc.approve(deployedStakingAddress, amountToStake);
-      await tx.wait();
-      
-      // 2. Stake
-      tx = await staking.stake(amountToStake);
-      await tx.wait();
-      
-      // Update Local State
       const newStaked = (Number(stakedUsdc) + Number(stakeInput)).toFixed(2);
       const newBalance = (Number(usdcBalance) - Number(stakeInput)).toFixed(2);
       
@@ -1158,7 +1104,7 @@ function App() {
       setUsdcBalance(newBalance);
       storage.set({ ritual_staked_usdc: newStaked, ritual_usdc: newBalance });
       
-      const newHistory = [{ hash: tx.hash, to: "Staking Contract", amount: `Stake ${stakeInput} USDC`, date: Date.now(), type: 'send' }, ...txHistory];
+      const newHistory = [{ hash: result.hash || '', to: "Staking Contract", amount: `Stake ${stakeInput} USDC`, date: Date.now(), type: 'send' }, ...txHistory];
       setTxHistory(newHistory);
       storage.set({ ritual_txs: newHistory });
 
@@ -1172,32 +1118,20 @@ function App() {
     }
   };
 
-  const scanBlockchainHistory = async () => {
+    const scanBlockchainHistory = async () => {
     if (!address) return;
     try {
       setIsScanning(true);
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const currentBlock = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, currentBlock - 5000); 
-      
-      const erc20Topic = ethers.id("Transfer(address,address,uint256)");
-      const addressPad = ethers.zeroPadValue(address, 32);
-      
-      const logs = await provider.getLogs({
-        fromBlock,
-        toBlock: currentBlock,
-        topics: [erc20Topic, null, addressPad]
-      });
-
-      if (logs.length > 0) {
-        showToast(`Found ${logs.length} transfers! Check Activity.`);
+      const newRecords = await PortfolioService.scanBlockchainHistory(address, isMainnet);
+      if (newRecords.length > 0) {
+        showToast(`Found ${newRecords.length} transfers! Check Activity.`);
         const newHistory = [...txHistory];
-        logs.forEach(log => {
-          if (!newHistory.find(t => t.hash === log.transactionHash)) {
-            newHistory.push({ hash: log.transactionHash, to: address, amount: "? (Scanned)", date: Date.now(), type: 'receive' });
+        newRecords.forEach((record: any) => {
+          if (!newHistory.find(t => t.hash === record.hash)) {
+            newHistory.push(record as any);
           }
         });
-        setTxHistory(newHistory);
+        setTxHistory(newHistory as any);
         storage.set({ ritual_txs: newHistory });
       } else {
         showToast("No new transfers found.");
@@ -1210,18 +1144,15 @@ function App() {
   };
 
 
-  const handleRevoke = async () => {
+    const handleRevoke = async () => {
     if (!deployedUsdcAddress || !privateKey) {
       showToast("No active token approvals found.");
       return;
     }
     setIsRevoking(true);
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey, provider);
-      const usdc = new ethers.Contract(deployedUsdcAddress, USDC.abi, wallet);
-      const tx = await usdc.approve("0x000000000000000000000000000000000000dEaD", 0);
-      await tx.wait();
+      const result = await TokenService.revokeApprovals(privateKey, deployedUsdcAddress, "0x000000000000000000000000000000000000dEaD", isMainnet);
+      if (!result.success) throw new Error(result.error);
       
       setApprovalsRevoked(true);
       showToast("All risky approvals revoked on-chain!");
@@ -1258,23 +1189,15 @@ function App() {
     setShowMintFeePopup(true);
   };
 
-  const confirmMint = async () => {
+    const confirmMint = async () => {
     setShowMintFeePopup(false);
     const url = pendingMintUrl;
     
     setLoading(true);
     showToast("Minting on Ritual Chain...");
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey!, provider);
-      
-      // Send a 0 value tx with the image url inscribed in the data field
-      const tx = await wallet.sendTransaction({
-        to: "0x0000000000000000000000000000000000000000",
-        value: 0,
-        data: ethers.hexlify(ethers.toUtf8Bytes(url))
-      });
-      await tx.wait();
+      const result = await TokenService.mintNft(privateKey!, url, isMainnet);
+      if (!result.success) throw new Error(result.error);
 
       const newNft = { name: `Ritual AI #${Math.floor(Math.random() * 10000)}`, url };
       const updatedNfts = [newNft, ...nfts];
@@ -1282,7 +1205,7 @@ function App() {
       storage.set({ ritual_nfts: updatedNfts });
 
       // Add to Activity history
-      const newHistory = [{ hash: tx.hash, to: "Mint Contract", amount: "NFT", date: Date.now(), type: 'send' }, ...txHistory];
+      const newHistory = [{ hash: result.hash || '', to: "Mint Contract", amount: "NFT", date: Date.now(), type: 'send' }, ...txHistory];
       setTxHistory(newHistory);
       storage.set({ ritual_txs: newHistory });
 
@@ -1403,7 +1326,7 @@ function App() {
 
     // ── ON-CHAIN LLM (requires gas) ────────────────────────────────────
     setPendingAiPrompt(userMsg);
-    const fee = await estimateGasCost(rpcUrl);
+    const fee = await estimateGasCost(isMainnet);
     const aiFeeEst = (Number(fee) * 25).toFixed(5);
     setEstimatedAiFee(aiFeeEst);
     setShowAiFeePopup(true);
@@ -1413,7 +1336,7 @@ function App() {
     storage.set({ ritual_chat_history: chatHistory });
   };
 
-  const confirmAiFee = async () => {
+    const confirmAiFee = async () => {
     setShowAiFeePopup(false);
     const userPrompt = pendingAiPrompt;
     const newHistory = [...chatHistory, { role: "user", content: userPrompt }];
@@ -1441,144 +1364,12 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
 
       console.log("Calling Ritual On-Chain LLM Precompile (0x0802)...");
       
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      let executorAddress = await NetworkService.getLlmExecutor(isMainnet);
+      await NetworkService.depositToRitualWallet(privateKey, isMainnet);
 
-      // --- Step 1: Fetch a live registered executor from TEEServiceRegistry ---
-      // Capability.LLM = 1; TEEServiceRegistry at known address on Ritual testnet
-      const TEE_REGISTRY = "0x6D941571d1C9e7a7F1fba65AC0f95C8A9680e55";
-      const registryAbi = [
-        "function getExecutors(uint8 capability) external view returns (address[] memory)"
-      ];
-      const registry = new ethers.Contract(TEE_REGISTRY, registryAbi, provider);
-      let executorAddress: string | null = null;
-      const normalize = (a: string) => {
-        try { return ethers.getAddress(a); }
-        catch { try { return ethers.getAddress(a.toLowerCase()); } catch { return null; } }
-      };
-      try {
-        const executors: string[] = await registry.getExecutors(1); // capability LLM = 1
-        if (!executors || executors.length === 0) throw new Error("no executors");
-        // Pick a random one to distribute load
-        const raw = executors[Math.floor(Math.random() * executors.length)];
-        executorAddress = normalize(raw);
-        if (!executorAddress) throw new Error('invalid executor address from registry');
-        console.log("Using executor:", executorAddress);
-      } catch (err) {
-        // Fallback - known working executor from recent transactions on explorer
-        const stored = typeof window !== 'undefined' ? localStorage.getItem('ritual_executor_address') : null;
-        const fallback = stored || "0xB42e4e5D64f4B9a16CFD28a57dc76e4cb5F79d95";
-        executorAddress = normalize(fallback);
-        if (!executorAddress) {
-          showToast('No valid LLM executor available');
-          throw new Error('No valid LLM executor available');
-        }
-        if (stored) console.log('Using executor from localStorage:', executorAddress);
-        else console.warn("Registry call failed, using fallback executor:", executorAddress);
-      }
-
-      // --- Step 2: Deposit into RitualWallet so async settlement can complete ---
-      const RITUAL_WALLET_CONTRACT = "0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948";
-      const ritualWalletAbi = [
-        "function deposit(uint256 lockDuration) external payable"
-      ];
-      const wallet = new ethers.Wallet(privateKey, provider);
-      try {
-        const rw = new ethers.Contract(RITUAL_WALLET_CONTRACT, ritualWalletAbi, wallet);
-        const depositTx = await rw.deposit(5000n, { value: ethers.parseEther("0.01") });
-        await depositTx.wait();
-        console.log("RitualWallet deposit complete");
-      } catch (e) {
-        // Deposit may fail if already funded - non-fatal
-        console.warn("RitualWallet deposit skipped:", (e as Error).message);
-      }
-
-      // --- Step 3: Build and send the LLM precompile call ---
-      const messagesJson = JSON.stringify([
-        { role: 'system', content: systemPrompt },
-        ...newHistory.map(m => ({ role: m.role, content: m.content }))
-      ]);
-
-      const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-      // Full 30-field ABI as per ritual-dapp-llm docs (field count must be exactly 30)
-      const encodedData = abiCoder.encode(
-        [
-          "address",    // executor
-          "bytes[]",    // encryptedSecrets
-          "uint256",    // ttl
-          "bytes[]",    // secretSignatures
-          "bytes",      // userPublicKey
-          "string",     // messagesJson
-          "string",     // model
-          "int256",     // frequencyPenalty
-          "string",     // logitBiasJson
-          "bool",       // logprobs
-          "int256",     // maxCompletionTokens (>=4096 for GLM reasoning model)
-          "string",     // metadataJson
-          "string",     // modalitiesJson
-          "uint256",    // n
-          "bool",       // parallelToolCalls
-          "int256",     // presencePenalty
-          "string",     // reasoningEffort
-          "bytes",      // responseFormatData
-          "int256",     // seed
-          "string",     // serviceTier
-          "string",     // stopJson
-          "bool",       // stream
-          "int256",     // temperature (0.7 × 1000 = 700)
-          "bytes",      // toolChoiceData
-          "bytes",      // toolsData
-          "int256",     // topLogprobs
-          "int256",     // topP (1.0 × 1000 = 1000)
-          "string",     // user
-          "bool",       // piiEnabled
-          "tuple(string,string,string)" // convoHistory (empty = no DA storage)
-        ],
-        [
-          executorAddress,
-          [],       // encryptedSecrets
-          300n,     // ttl: 300 blocks (safe for reasoning model)
-          [],       // secretSignatures
-          "0x",     // userPublicKey
-          messagesJson,
-          "zai-org/GLM-4.7-FP8",
-          0n,       // frequencyPenalty
-          "",       // logitBiasJson
-          false,    // logprobs
-          4096n,    // maxCompletionTokens - MUST be >=4096 for GLM reasoning model
-          "",       // metadataJson
-          "",       // modalitiesJson
-          1n,       // n
-          true,     // parallelToolCalls
-          0n,       // presencePenalty
-          "medium", // reasoningEffort
-          "0x",     // responseFormatData
-          -1n,      // seed (null)
-          "auto",   // serviceTier
-          "",       // stopJson
-          false,    // stream
-          700n,     // temperature 0.7
-          "0x",     // toolChoiceData
-          "0x",     // toolsData
-          -1n,      // topLogprobs (null)
-          1000n,    // topP 1.0
-          "",       // user
-          false,    // piiEnabled
-          ["", "", ""]  // convoHistory: empty tuple = no DA storage (valid)
-        ]
-      );
-
-      let tx: any;
-      let receipt: any;
-      try {
-        tx = await wallet.sendTransaction({
-          to: "0x0000000000000000000000000000000000000802",
-          data: encodedData,
-          gasLimit: 5000000
-        });
-        receipt = await tx.wait();
-        console.log("TX confirmed:", tx.hash, "Block:", receipt.blockNumber);
-      } catch (err: any) {
-        const em = err?.message || String(err);
+      const llmResult = await NetworkService.sendLlmQuery(privateKey, executorAddress, systemPrompt, newHistory, isMainnet);
+      if (!llmResult.success) {
+        const em = llmResult.error;
         if (em && em.toLowerCase().includes('not registered') && em.toLowerCase().includes('executor')) {
           showToast('On-chain executor temporarily offline.');
           const finalHist = [...newHistory, {role: 'assistant', content: `Oops! My on-chain LLM node is currently syncing with the Ritual testnet. 🚧\n\nI can still help you with your **balance**, **wallet address**, **simulating swaps**, or **generating images** right now!`}];
@@ -1587,8 +1378,11 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
           setIsAiLoading(false);
           return;
         }
-        throw err;
+        throw new Error(llmResult.error);
       }
+
+      const tx = { hash: llmResult.hash || '' };
+      const receipt = llmResult.data;
 
       // Log tx to activity
       const newTx = { hash: tx.hash, to: "0x0000000000000000000000000000000000000802", amount: "LLM Query", date: Date.now(), type: "AI On-Chain Query" };
@@ -1597,159 +1391,61 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
       storage.set({ ritual_txs: updatedTxs });
 
       // Update balance
-      const newBal = await provider.getBalance(wallet.address);
-      setBalance(ethers.formatEther(newBal));
-
-      // ─── Ritual AI is ASYNC ───────────────────────────────────────────
-      // The LLM runs off-chain in a TEE. We poll an InferenceRegistry
-      // contract to check when the response is written back on-chain.
-      // ─────────────────────────────────────────────────────────────────
-      const INFERENCE_REGISTRY = "0x0000000000000000000000000000000000000802";
-      const pollAbi = [
-        "function getResponse(bytes32 reqHash) external view returns (bool ready, bytes memory result)"
-      ];
-      
-      // The request hash is keccak256 of the tx hash
-      const reqHash = ethers.keccak256(ethers.toUtf8Bytes(tx.hash));
-      const pollContract = new ethers.Contract(INFERENCE_REGISTRY, pollAbi, provider);
+      const newBalStr = await BalanceService.getNativeBalance(address!, isMainnet);
+      setBalance(newBalStr);
 
       let botReply = "";
-      const maxAttempts = 40; // poll every 4.5s for up to ~3 mins
-      let attempts = 0;
       
-      while (attempts < maxAttempts) {
-        await new Promise(r => setTimeout(r, 4500));
-        attempts++;
-        
-        try {
-          // Try reading the result from the receipt logs first
-          const receiptLogs = receipt?.logs || [];
-          for (const log of receiptLogs) {
-            if (log.data && log.data.length > 10) {
-              try {
-                const decoded = abiCoder.decode(
-                  ["bool", "bytes", "bytes", "string", "tuple(string,string,string)"],
-                  log.data
-                );
-                if (!decoded[0]) { // hasError = false
-                  const completionData = decoded[1];
-                  const [ , , , , , , choicesCount, choicesData] = abiCoder.decode(
-                    ["string", "string", "uint256", "string", "string", "string", "uint256", "bytes[]", "bytes"],
-                    completionData
-                  );
-                  if (Number(choicesCount) > 0 && choicesData.length > 0) {
-                    const [ , [ , content]] = abiCoder.decode(
-                      ["uint256", "tuple(string, string)", "bytes", "string"],
-                      choicesData[0]
-                    );
-                    botReply = (content as string).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-                    if (botReply) break;
-                  }
-                }
-              } catch { /* try next log */ }
-            }
+      // Try decoding from receipt logs first
+      const receiptLogs = receipt?.logs || [];
+      for (const log of receiptLogs) {
+        if (log.data && log.data.length > 10) {
+          const decodedText = NetworkService.decodeLlmLog(log.data);
+          if (decodedText) {
+            botReply = decodedText;
+            break;
           }
-          
-          if (botReply) break;
-        } catch { /* continue polling */ }
-
-        // After 3 attempts, try polling getResponse if available
-        if (attempts >= 3) {
-          try {
-            const [ready, result] = await pollContract.getResponse(reqHash);
-            if (ready && result && result !== "0x") {
-              const [hasError, completionData, , errorMessage] = abiCoder.decode(
-                ["bool", "bytes", "bytes", "string", "tuple(string,string,string)"],
-                result
-              );
-              if (hasError) throw new Error(errorMessage || "LLM error");
-              const [ , , , , , , choicesCount, choicesData] = abiCoder.decode(
-                ["string", "string", "uint256", "string", "string", "string", "uint256", "bytes[]", "bytes"],
-                completionData
-              );
-              if (Number(choicesCount) > 0 && choicesData.length > 0) {
-                const [ , [ , content]] = abiCoder.decode(
-                  ["uint256", "tuple(string, string)", "bytes", "string"],
-                  choicesData[0]
-                );
-                botReply = (content as string).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-              }
-              if (botReply) break;
-            }
-          } catch { /* not available, keep polling */ }
         }
       }
 
       if (!botReply) {
-        // Tx succeeded but response timed out - give user the tx hash
-        const finalHist = [...newHistory, {role: 'assistant', content: `✅ Your query was submitted on-chain (tx: \`${tx.hash.slice(0,10)}...\`), but the AI response is still processing. Check the Activity tab - the result will appear when the executor responds.`}];
-        setChatHistory(finalHist);
-        storage.set({ ritual_chat_history: finalHist });
-        setIsAiLoading(false);
-        return;
+        const maxAttempts = 40; // poll every 4.5s for up to ~3 mins
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 4500));
+          attempts++;
+          
+          try {
+            const pollRes = await NetworkService.pollInferenceResult(tx.hash, isMainnet);
+            if (pollRes.ready) {
+              botReply = pollRes.result;
+              break;
+            }
+          } catch (e) {
+            console.warn("poll err", e);
+          }
+        }
       }
 
-      // Handle JSON action responses
-      try {
-        const parsed = JSON.parse(botReply);
-        if (parsed.action === 'send' && parsed.amount && parsed.to) {
-          setSendAmount(parsed.amount);
-          setSendTo(parsed.to);
-          const finalHist = [...newHistory, {role: 'assistant', content: `I've prepared a transaction to send **${parsed.amount} RITUAL** to \`${parsed.to.slice(0,8)}...\`. Redirecting to confirm.`}];
-          setChatHistory(finalHist);
-          storage.set({ ritual_chat_history: finalHist });
-          setTimeout(() => setCurrentView('send'), 1500);
-          setIsAiLoading(false);
-          return;
-        }
-        if (parsed.action === 'swap') {
-          const finalHist = [...newHistory, {role: 'assistant', content: `Opening the Swap module for you! 🔁`}];
-          setChatHistory(finalHist);
-          storage.set({ ritual_chat_history: finalHist });
-          setTimeout(() => setActiveTab('swap'), 1500);
-          setIsAiLoading(false);
-          return;
-        }
-        if (parsed.action === 'health') {
-          const finalHist = [...newHistory, {role: 'assistant', content: `Opening your AI Security Center 🛡️`}];
-          setChatHistory(finalHist);
-          storage.set({ ritual_chat_history: finalHist });
-          setTimeout(() => setActiveTab('health'), 1500);
-          setIsAiLoading(false);
-          return;
-        }
-        if (parsed.action === 'yield') {
-          const finalHist = [...newHistory, {role: 'assistant', content: `Found some great opportunities! Opening Yield Optimizer 📈`}];
-          setChatHistory(finalHist);
-          storage.set({ ritual_chat_history: finalHist });
-          setTimeout(() => setCurrentView('yield'), 1500);
-          setIsAiLoading(false);
-          return;
-        }
-        if (parsed.action === 'generate_image' && parsed.prompt) {
-          const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(parsed.prompt)}?width=512&height=512&nologo=true`;
-          const finalHist = [...newHistory, {role: 'assistant', content: `✨ Here's your image:`, imageUrl: imgUrl}];
-          setChatHistory(finalHist);
-          storage.set({ ritual_chat_history: finalHist });
-          setIsAiLoading(false);
-          return;
-        }
-      } catch { /* plain text reply */ }
+      if (!botReply) {
+        botReply = "Query sent! Ritual node is processing. Response will show in logs.";
+      }
 
-      const finalHist = [...newHistory, {role: 'assistant', content: botReply}];
+      const finalHist = [...newHistory, { role: 'assistant', content: botReply }];
       setChatHistory(finalHist);
       storage.set({ ritual_chat_history: finalHist });
-      if (isListening === false && window.speechSynthesis) speakText(botReply);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "AI Error";
-      const finalHist = [...newHistory, {role: 'assistant', content: `⚠️ ${msg}`}];
+
+    } catch (e: any) {
+      console.error(e);
+      showToast("LLM Query failed: " + (e.message || "Unknown error"));
+      const finalHist = [...newHistory, { role: 'assistant', content: "Sorry, I couldn't reach the Ritual on-chain network. Please try again." }];
       setChatHistory(finalHist);
       storage.set({ ritual_chat_history: finalHist });
-      showToast(msg.length > 50 ? "AI Query Failed" : msg);
     } finally {
       setIsAiLoading(false);
     }
-  };
+  };;
 
   const resetWallet = () => {
     setShowResetConfirm(true);
@@ -1834,7 +1530,12 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
           placeholder="Password" 
           value={passwordInput} 
           onChange={e => setPasswordInput(e.target.value)} 
-          onKeyDown={e => e.key === 'Enter' && handleUnlock()} 
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleUnlock();
+            }
+          }}
         />
         {authError && <div className="text-red-500 text-sm font-medium">{authError}</div>}
         
@@ -1938,29 +1639,18 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
   if (authState === 'unlocked' && address) {
     if (currentView === 'send') {
       const executeSend = async (recipient: string, amount: string, asset: 'RITUAL'|'USDC') => {
-        const parsedAmount = ethers.parseEther(amount);
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        const wallet = new ethers.Wallet(privateKey!, provider);
-        let tx;
+        let result;
         if (asset === 'USDC' && deployedUsdcAddress) {
-          const usdcAbi = ["function transfer(address to, uint256 amount) returns (bool)"];
-          const usdcContract = new ethers.Contract(deployedUsdcAddress, usdcAbi, wallet);
-          tx = await usdcContract.transfer(recipient, parsedAmount);
+          result = await TransactionService.sendUsdc(privateKey!, recipient, amount, deployedUsdcAddress, isMainnet);
         } else {
-          tx = await wallet.sendTransaction({ to: recipient, value: parsedAmount });
+          result = await TransactionService.sendNative(privateKey!, recipient, amount, isMainnet);
         }
+        if (!result.success) throw new Error(result.error);
         
-        const newTx = { hash: tx.hash, to: recipient, amount: amount, date: Date.now(), type: 'send' };
-        const updatedHist = [newTx, ...txHistory];
-        setTxHistory(updatedHist);
-        storage.set({ ritual_txs: updatedHist });
-        useWalletStore.getState().setTransactions(updatedHist as any);
-        
-        await tx.wait();
+        saveTx(result.hash || '', recipient, amount, 'send');
         setupWallet(privateKey!);
         setCurrentView('main');
-        setActiveTab('home');
-        triggerToast(`Successfully sent ${amount} ${asset}`);
+        setActiveTab('activity');
       };
       
       return (
@@ -1976,7 +1666,7 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
       return (
         <AppShell>
           {activeTab === 'home' && <HomeDashboard />}
-          {activeTab === 'discover' && <div className="flex items-center justify-center h-full text-gray-500">Discover (Coming Soon)</div>}
+          {activeTab === 'discover' && <DiscoverScreen />}
           {activeTab === 'portfolio' && <PortfolioScreen />}
           {activeTab === 'swap' && <SwapScreen />}
           {activeTab === 'ai' && <AIWorkspace />}

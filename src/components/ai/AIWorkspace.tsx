@@ -365,7 +365,12 @@ export function AIWorkspace() {
                 placeholder="Ask Ritual AI..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
                 className="flex-1 bg-transparent text-sm text-white outline-none placeholder-gray-500"
               />
               <button className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white transition-colors">

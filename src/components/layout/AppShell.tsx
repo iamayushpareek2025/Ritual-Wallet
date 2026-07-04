@@ -194,7 +194,10 @@ export function AppShell({ children }: AppShellProps) {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => {
+                setActiveTab(tab.id as any);
+                setCurrentView('main');
+              }}
               className="flex-1 flex flex-col items-center justify-center gap-1 h-full relative"
             >
               {isActive && (
