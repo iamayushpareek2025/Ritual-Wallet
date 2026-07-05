@@ -34,11 +34,18 @@
 
 body {
   margin: 0;
-  width: 360px;
+  width: 375px;
   height: 600px;
   display: flex;
   overflow: hidden;
   box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+  body {
+    width: 100vw;
+    height: 100vh;
+  }
 }
 
 #root {

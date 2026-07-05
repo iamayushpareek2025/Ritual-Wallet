@@ -14,7 +14,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './index.css';
 import { useUIStore } from './stores/useUIStore';
+import { useAIStore, setGlobalExecuteAiCommand } from './stores/useAIStore';
 import { useWalletStore } from './stores/useWalletStore';
+import { AIEngine, getLivePortfolioContext } from './ai';
 import { AppShell } from './components/layout/AppShell';
 import { HomeDashboard } from './components/wallet/HomeDashboard';
 import { PortfolioScreen } from './components/portfolio/PortfolioScreen';
@@ -29,6 +31,7 @@ import { SwapScreen } from './components/swap/SwapScreen';
 import { BridgeScreen } from './components/bridge/BridgeScreen';
 import { AIWorkspace } from './components/ai/AIWorkspace';
 import { DiscoverScreen } from './components/social/DiscoverScreen';
+import { ReceiveScreen } from './components/wallet/ReceiveScreen';
 
 // Global config removed for dynamic rpcUrl
 
@@ -137,10 +140,10 @@ function App() {
   
   // AI Agent State
   const [aiInput, setAiInput] = useState("");
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [chatHistory, setChatHistory] = useState<{role:string, content:string, imageUrl?:string}[]>([
-    {role: 'assistant', content: 'Welcome to Ritual AI. ✨\n\nI am your on-chain intelligent agent. I can help you manage your portfolio, execute trades, answer crypto questions, or even generate AI art. Try saying:\n\n- "Send 0.1 USDC to 0x123..."\n- "Generate a picture of a cyberpunk city"'}
-  ]);
+  const chatHistory = useAIStore(state => state.chatHistory);
+  const setChatHistory = useAIStore(state => state.setChatHistory);
+  const isAiLoading = useAIStore(state => state.isAiLoading);
+  const setIsAiLoading = (loading: boolean) => useAIStore.getState().setLoading(loading);
   const [showAiFeePopup, setShowAiFeePopup] = useState(false);
   const [pendingAiPrompt, setPendingAiPrompt] = useState("");
   const [showMintFeePopup, setShowMintFeePopup] = useState(false);
@@ -626,6 +629,36 @@ function App() {
   useEffect(() => {
     useWalletStore.getState().setSwitchAccountCallback(switchAccount);
   }, [vault]);
+
+
+
+  useEffect(() => {
+    setGlobalExecuteAiCommand(handleAiCommand);
+    return () => {
+      setGlobalExecuteAiCommand(undefined);
+    };
+  }, [chatHistory, aiInput, isMainnet, balance, address, privateKey, txHistory]);
+
+  // Check pre-filled inputs for send screen
+  useEffect(() => {
+    if (currentView === 'send') {
+      const prefilledTo = localStorage.getItem('ritual_prefilled_send_to');
+      const prefilledAmount = localStorage.getItem('ritual_prefilled_send_amount');
+      const prefilledToken = localStorage.getItem('ritual_prefilled_send_token');
+      if (prefilledTo) {
+        setSendTo(prefilledTo);
+        localStorage.removeItem('ritual_prefilled_send_to');
+      }
+      if (prefilledAmount) {
+        setSendAmount(prefilledAmount);
+        localStorage.removeItem('ritual_prefilled_send_amount');
+      }
+      if (prefilledToken) {
+        setSendToken(prefilledToken as any);
+        localStorage.removeItem('ritual_prefilled_send_token');
+      }
+    }
+  }, [currentView]);
 
     const addAccount = () => {
     if (!vault || !vault.mnemonic) {
@@ -1218,17 +1251,52 @@ function App() {
     }
   };
 
-  const handleAiCommand = async () => {
-    if (!aiInput.trim()) return;
-    const userMsg = aiInput.trim();
+  const handleAiCommand = async (text?: string) => {
+    const userMsg = (text !== undefined ? text : aiInput).trim();
+    if (!userMsg) return;
     setAiInput("");
 
-    const lower = userMsg.toLowerCase();
     const newHistory = [...chatHistory, { role: "user", content: userMsg }];
     setChatHistory(newHistory);
     storage.set({ ritual_chat_history: newHistory });
 
+    const activeProviderName = AIEngine.getInstance().getActiveProviderName();
+    const lowerQuery = userMsg.toLowerCase();
+    const isLocalQuery = lowerQuery.includes('balance') || lowerQuery.includes('how much') || lowerQuery.includes('portfolio') || lowerQuery.includes('funds') ||
+                         lowerQuery.includes('address') || lowerQuery.includes('wallet address') || lowerQuery.includes('my address') ||
+                         lowerQuery.includes('generate') || lowerQuery.includes('draw') || lowerQuery.includes('create an image') || lowerQuery.includes('paint') || lowerQuery.includes('picture of') || lowerQuery.includes('image of') ||
+                         (lowerQuery.includes('send') && (lowerQuery.includes('ritual') || lowerQuery.includes('token') || lowerQuery.includes('0x'))) ||
+                         lowerQuery.includes('swap') || lowerQuery.includes('bridge') || lowerQuery.includes('security') || lowerQuery.includes('safe') || lowerQuery.includes('audit');
+
+    if (activeProviderName === 'none' && !isLocalQuery) {
+      const finalHist = [...newHistory, { role: 'assistant', content: "No AI Provider Configured. Please go to Settings to configure a provider (OpenAI, Anthropic, or Ollama) or use local queries like 'balance' or 'address'." }];
+      setChatHistory(finalHist);
+      storage.set({ ritual_chat_history: finalHist });
+      return;
+    }
+
+    if (activeProviderName !== 'ritual' && activeProviderName !== 'none' && !isLocalQuery) {
+      setIsAiLoading(true);
+      try {
+        const context = await getLivePortfolioContext();
+        const response = await AIEngine.getInstance().processPrompt(userMsg, context);
+        const botReply = `${response.content}\n\n*Response Source: [${response.source}]*`;
+        
+        const finalHist = [...newHistory, { role: 'assistant', content: botReply }];
+        setChatHistory(finalHist);
+        storage.set({ ritual_chat_history: finalHist });
+      } catch (e: any) {
+        const finalHist = [...newHistory, { role: 'assistant', content: `AI Provider Error: ${e.message || e}` }];
+        setChatHistory(finalHist);
+        storage.set({ ritual_chat_history: finalHist });
+      } finally {
+        setIsAiLoading(false);
+      }
+      return;
+    }
+
     // ── LOCAL INTELLIGENCE (no gas needed) ────────────────────────────
+    const lower = userMsg.toLowerCase();
     // 1. Balance / portfolio queries
     if (lower.includes('balance') || lower.includes('how much') || lower.includes('portfolio') || lower.includes('funds')) {
       const reply = `Your current balance is **${Number(balance).toFixed(6)} RITUAL** on Ritual Testnet.\n\nAddress: \`${address}\``;
@@ -1432,14 +1500,16 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
         botReply = "Query sent! Ritual node is processing. Response will show in logs.";
       }
 
-      const finalHist = [...newHistory, { role: 'assistant', content: botReply }];
+      const taggedReply = `${botReply}\n\n*Response Source: [Live AI]*`;
+      const finalHist = [...newHistory, { role: 'assistant', content: taggedReply }];
       setChatHistory(finalHist);
       storage.set({ ritual_chat_history: finalHist });
 
     } catch (e: any) {
       console.error(e);
       showToast("LLM Query failed: " + (e.message || "Unknown error"));
-      const finalHist = [...newHistory, { role: 'assistant', content: "Sorry, I couldn't reach the Ritual on-chain network. Please try again." }];
+      const taggedReply = `Sorry, I couldn't reach the Ritual on-chain network. Please try again.\n\n*Response Source: [Unavailable]*`;
+      const finalHist = [...newHistory, { role: 'assistant', content: taggedReply }];
       setChatHistory(finalHist);
       storage.set({ ritual_chat_history: finalHist });
     } finally {
@@ -1456,7 +1526,7 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
   // ---------------------------------------------------------
   if (authState === 'loading') {
     return (
-      <div className="flex flex-col h-screen w-full bg-[#09090b] text-white items-center justify-center">
+      <div className="flex flex-col h-screen w-full bg-[#000000] text-white items-center justify-center">
         <div className="w-8 h-8 border-4 border-[#00FFA3] border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
@@ -1464,7 +1534,7 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
 
   // Common wrapper for all auth screens
   const renderAuthWrapper = (children: React.ReactNode) => (
-    <div className="flex flex-col h-screen w-full bg-[#09090b] text-white overflow-hidden relative font-sans">
+    <div className="flex flex-col h-screen w-full bg-[#000000] text-white overflow-hidden relative font-sans">
       <div className="absolute top-4 right-4 z-50 flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
         <div className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse shadow-[0_0_8px_#00FFA3]" />
         <span className="text-xs font-semibold tracking-wide text-white/80">Ritual Testnet</span>
@@ -1649,8 +1719,6 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
         
         saveTx(result.hash || '', recipient, amount, 'send');
         setupWallet(privateKey!);
-        setCurrentView('main');
-        setActiveTab('activity');
       };
       
       return (
@@ -1659,7 +1727,18 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
         </AppShell>
       );
     }
-    if (currentView === 'bridge') return <BridgeScreen />;
+    if (currentView === 'bridge') return <AppShell><BridgeScreen /></AppShell>;
+    if (currentView === 'receive') {
+      return (
+        <AppShell>
+          <ReceiveScreen
+            address={address!}
+            onBack={() => setCurrentView('main')}
+            showToast={showToast}
+          />
+        </AppShell>
+      );
+    }
 
 
     if (['home', 'portfolio', 'discover', 'swap', 'ai', 'activity'].includes(activeTab) && currentView === 'main') {
@@ -1683,7 +1762,7 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
         disconnectApp, removeAddressBookEntry, startEditingAddressBook, handleSelectAddressBookContact,
         addAccount, importAccount,
         revealSeed, setRevealSeed, activePassword, setActivePassword, 
-        privateKey, setPrivateKey, setAddress, setBalance, setAuthState
+        privateKey, setPrivateKey, address, setAddress, setBalance, setAuthState
       };
       return <AppShell><SettingsScreen appState={appState} /></AppShell>;
     }
