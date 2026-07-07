@@ -28,6 +28,7 @@ import { useWalletStore } from '../../stores/useWalletStore';
 import { AIEngine } from '../../ai';
 import { AddressValidator } from '../../security/addressValidator';
 import { MockSecurityProvider } from '../../security/provider';
+import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 interface Message {
   id: string;
@@ -46,6 +47,7 @@ interface AutomationRule {
 }
 
 export function AIWorkspace() {
+  const isDesktop = useIsDesktop();
   const { triggerToast, setCurrentView, setSendToken, setActiveTab } = useUIStore();
   const { chatHistory, isAiLoading, pendingPrompt, setPendingPrompt, clearHistory } = useAIStore();
   const { address, balance, usdcBalance, stakedUsdc, isMainnet } = useWalletStore();
@@ -388,7 +390,7 @@ export function AIWorkspace() {
       </div>
 
       {/* Main Panel Content */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 pb-24 scrollbar-hide">
+      <div className="flex-1 flex flex-col min-h-0 relative">
         <AnimatePresence mode="wait">
           
           {/* ASSISTANT SUB-TAB */}
@@ -398,159 +400,162 @@ export function AIWorkspace() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="flex flex-col gap-4 min-h-[440px]"
+              className="flex-1 flex flex-col min-h-0"
             >
-              {activeProvider === 'none' && (
-                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center gap-2">
-                  <AlertCircle size={15} />
-                  No AI Provider Configured.
-                </div>
-              )}
-
-              {parsedMessages.length === 0 && (
-                <>
-                  {/* AI Guardian Top Card */}
-                  <div className="p-4 rounded-[20px] bg-white/5 border border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-[#00FFA3]/10 border border-[#00FFA3]/20 flex items-center justify-center text-[#00FFA3]">
-                        <ShieldCheck size={18} />
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-white">AI Guardian</div>
-                        <div className="text-[10px] text-gray-500 mt-0.5">Monitoring your wallet 24/7</div>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-bold text-[#00FFA3] bg-[#00FFA3]/10 border border-[#00FFA3]/20 px-2.5 py-0.5 rounded-full">Healthy</span>
+              {/* Scrollable Chat Feed Area */}
+              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 scrollbar-hide flex flex-col gap-4">
+                {activeProvider === 'none' && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center gap-2">
+                    <AlertCircle size={15} />
+                    No AI Provider Configured.
                   </div>
+                )}
 
-                  {/* 2x2 Quick Actions Grid */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <button 
-                      onClick={() => handleQuickAction("Analyze portfolio")} 
-                      disabled={isAiLoading} 
-                      className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-[#00FFA3]/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
-                    >
-                      <TrendingUp size={16} className="text-[#00FFA3]" />
-                      <span>Analyze Portfolio</span>
-                    </button>
-                    <button 
-                      onClick={() => handleQuickAction("Check wallet security")} 
-                      disabled={isAiLoading} 
-                      className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-green-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
-                    >
-                      <Shield size={16} className="text-green-400" />
-                      <span>Check Security</span>
-                    </button>
-                    <button 
-                      onClick={() => handleQuickAction("Explain last transaction")} 
-                      disabled={isAiLoading} 
-                      className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-blue-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
-                    >
-                      <FileText size={16} className="text-blue-400" />
-                      <span>Explain Tx</span>
-                    </button>
-                    <button 
-                      onClick={() => handleQuickAction("Research Ritual token")} 
-                      disabled={isAiLoading} 
-                      className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-purple-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
-                    >
-                      <BookOpen size={16} className="text-purple-400" />
-                      <span>Research Token</span>
-                    </button>
-                  </div>
-
-                  {/* Suggested Prompts List with green arrow icons */}
-                  <div className="space-y-2">
-                    <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Suggested Prompts</div>
-                    <div className="flex flex-col gap-2">
-                      {[
-                        "What is my portfolio performance?",
-                        "Are my approvals safe?",
-                        "Explain my last transaction"
-                      ].map((prompt, i) => (
-                        <button
-                          key={i}
-                          onClick={() => handleQuickAction(prompt)}
-                          disabled={isAiLoading}
-                          className="w-full p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 text-left text-xs font-semibold text-gray-300 flex items-center justify-between disabled:opacity-40 transition active:scale-99"
-                        >
-                          <span>{prompt}</span>
-                          <ArrowRight size={13} className="text-[#00FFA3]" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Chat Feed */}
-              {parsedMessages.length > 0 && (
-                <div className="flex-1 flex flex-col gap-4 min-h-[220px]">
-                  <div className="flex justify-between items-center px-1">
-                    <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">Conversation logs</span>
-                    <button onClick={clearHistory} className="text-[10px] text-red-400 hover:underline flex items-center gap-1 font-bold">
-                      <Trash2 size={10} /> Clear Logs
-                    </button>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    {parsedMessages.map((msg) => (
-                      <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                        <span className="text-[9px] text-gray-500 mb-1">{msg.role === 'user' ? 'You' : 'Agent'}</span>
-                        <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs leading-relaxed ${
-                          msg.role === 'user' 
-                            ? 'bg-blue-600/15 border border-blue-500/20 text-white rounded-tr-none' 
-                            : 'bg-white/5 border border-white/5 text-gray-200 rounded-tl-none'
-                        }`}>
-                          <div className="whitespace-pre-wrap">{msg.content}</div>
-
-                          {msg.type === 'transaction' && msg.metadata && (
-                            <div className="mt-3 p-2.5 rounded-xl bg-black/40 border border-white/10 flex flex-col gap-1">
-                              <div className="flex justify-between text-[10px]">
-                                <span className="text-gray-500 font-medium">To Recipient</span>
-                                <span className="text-white font-mono">{msg.metadata.to.slice(0, 8)}...</span>
-                              </div>
-                              <div className="flex justify-between text-[10px]">
-                                <span className="text-gray-500 font-medium">Asset & Amount</span>
-                                <span className="text-[#00FFA3] font-bold">{msg.metadata.amount} {msg.metadata.asset}</span>
-                              </div>
-                              <button 
-                                onClick={() => executeAction('transaction', msg.metadata)}
-                                className="w-full mt-2 py-1.5 rounded-lg bg-[#00FFA3] text-black text-[10px] font-bold hover:brightness-105 transition"
-                              >
-                                Review & Sign
-                              </button>
-                            </div>
-                          )}
-
-                          {(msg.type === 'swap_redirect' || msg.type === 'bridge_redirect' || msg.type === 'health_redirect' || msg.type === 'yield_redirect') && (
-                            <button 
-                              onClick={() => executeAction(msg.type!, msg.metadata)}
-                              className="mt-2.5 py-1.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-[10px] font-semibold transition flex items-center gap-1 border border-white/5"
-                            >
-                              Launch Interface <ArrowRight size={11} />
-                            </button>
-                          )}
+                {parsedMessages.length === 0 && (
+                  <>
+                    {/* AI Guardian Top Card */}
+                    <div className="p-4 rounded-[20px] bg-white/5 border border-white/10 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-[#00FFA3]/10 border border-[#00FFA3]/20 flex items-center justify-center text-[#00FFA3]">
+                          <ShieldCheck size={18} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">AI Guardian</div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">Monitoring your wallet 24/7</div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <span className="text-[10px] font-bold text-[#00FFA3] bg-[#00FFA3]/10 border border-[#00FFA3]/20 px-2.5 py-0.5 rounded-full">Healthy</span>
+                    </div>
 
-                  {isAiLoading && (
-                    <div className="flex flex-col items-start">
-                      <span className="text-[9px] text-gray-500 mb-1">Agent</span>
-                      <div className="p-3 rounded-xl bg-white/5 border border-white/5 rounded-tl-none flex gap-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '300ms' }} />
+                    {/* 2x2 Quick Actions Grid */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button 
+                        onClick={() => handleQuickAction("Analyze portfolio")} 
+                        disabled={isAiLoading} 
+                        className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-[#00FFA3]/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
+                      >
+                        <TrendingUp size={16} className="text-[#00FFA3]" />
+                        <span>Analyze Portfolio</span>
+                      </button>
+                      <button 
+                        onClick={() => handleQuickAction("Check wallet security")} 
+                        disabled={isAiLoading} 
+                        className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-green-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
+                      >
+                        <Shield size={16} className="text-green-400" />
+                        <span>Check Security</span>
+                      </button>
+                      <button 
+                        onClick={() => handleQuickAction("Explain last transaction")} 
+                        disabled={isAiLoading} 
+                        className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-blue-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
+                      >
+                        <FileText size={16} className="text-blue-400" />
+                        <span>Explain Tx</span>
+                      </button>
+                      <button 
+                        onClick={() => handleQuickAction("Research Ritual token")} 
+                        disabled={isAiLoading} 
+                        className="p-3.5 rounded-[18px] bg-white/5 border border-white/5 hover:border-purple-400/20 hover:bg-white/10 text-left text-xs font-semibold text-gray-200 transition active:scale-97 disabled:opacity-40 flex flex-col justify-between h-20"
+                      >
+                        <BookOpen size={16} className="text-purple-400" />
+                        <span>Research Token</span>
+                      </button>
+                    </div>
+
+                    {/* Suggested Prompts List with green arrow icons */}
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Suggested Prompts</div>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          "What is my portfolio performance?",
+                          "Are my approvals safe?",
+                          "Explain my last transaction"
+                        ].map((prompt, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handleQuickAction(prompt)}
+                            disabled={isAiLoading}
+                            className="w-full p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 text-left text-xs font-semibold text-gray-300 flex items-center justify-between disabled:opacity-40 transition active:scale-99"
+                          >
+                            <span>{prompt}</span>
+                            <ArrowRight size={13} className="text-[#00FFA3]" />
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
+                  </>
+                )}
 
-              {/* Chat Input Field */}
-              <div className="mt-auto pt-2 shrink-0">
+                {/* Chat Feed */}
+                {parsedMessages.length > 0 && (
+                  <div className="flex-1 flex flex-col gap-4 min-h-[220px]">
+                    <div className="flex justify-between items-center px-1">
+                      <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">Conversation logs</span>
+                      <button onClick={clearHistory} className="text-[10px] text-red-400 hover:underline flex items-center gap-1 font-bold">
+                        <Trash2 size={10} /> Clear Logs
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {parsedMessages.map((msg) => (
+                        <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                          <span className="text-[9px] text-gray-500 mb-1">{msg.role === 'user' ? 'You' : 'Agent'}</span>
+                          <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs leading-relaxed ${
+                            msg.role === 'user' 
+                              ? 'bg-blue-600/15 border border-blue-500/20 text-white rounded-tr-none' 
+                              : 'bg-white/5 border border-white/5 text-gray-200 rounded-tl-none'
+                          }`}>
+                            <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                            {msg.type === 'transaction' && msg.metadata && (
+                              <div className="mt-3 p-2.5 rounded-xl bg-black/40 border border-white/10 flex flex-col gap-1">
+                                <div className="flex justify-between text-[10px]">
+                                  <span className="text-gray-500 font-medium">To Recipient</span>
+                                  <span className="text-white font-mono">{msg.metadata.to.slice(0, 8)}...</span>
+                                </div>
+                                <div className="flex justify-between text-[10px]">
+                                  <span className="text-gray-500 font-medium">Asset & Amount</span>
+                                  <span className="text-[#00FFA3] font-bold">{msg.metadata.amount} {msg.metadata.asset}</span>
+                                </div>
+                                <button 
+                                  onClick={() => executeAction('transaction', msg.metadata)}
+                                  className="w-full mt-2 py-1.5 rounded-lg bg-[#00FFA3] text-black text-[10px] font-bold hover:brightness-105 transition"
+                                >
+                                  Review & Sign
+                                </button>
+                              </div>
+                            )}
+
+                            {(msg.type === 'swap_redirect' || msg.type === 'bridge_redirect' || msg.type === 'health_redirect' || msg.type === 'yield_redirect') && (
+                              <button 
+                                onClick={() => executeAction(msg.type!, msg.metadata)}
+                                className="mt-2.5 py-1.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-[10px] font-semibold transition flex items-center gap-1 border border-white/5"
+                              >
+                                Launch Interface <ArrowRight size={11} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {isAiLoading && (
+                      <div className="flex flex-col items-start">
+                        <span className="text-[9px] text-gray-500 mb-1">Agent</span>
+                        <div className="p-3 rounded-xl bg-white/5 border border-white/5 rounded-tl-none flex gap-1">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input Field pinned at the bottom */}
+              <div className="shrink-0 p-4 border-t border-white/5 bg-[#000000]/90 backdrop-blur-md" style={{ paddingBottom: isDesktop ? '16px' : '96px' }}>
                 <div className="p-1 pl-3.5 rounded-full bg-white/5 border border-white/10 flex items-center gap-1.5 shadow-xl focus-within:border-white/20">
                   <input 
                     type="text" 
@@ -585,7 +590,8 @@ export function AIWorkspace() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="space-y-4"
+              className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-4"
+              style={{ paddingBottom: isDesktop ? '16px' : '96px' }}
             >
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
                 <div className="text-gray-400 text-xs font-semibold mb-1 uppercase tracking-wider">Total Assets Value</div>
@@ -630,7 +636,8 @@ export function AIWorkspace() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="space-y-5"
+              className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-5"
+              style={{ paddingBottom: isDesktop ? '16px' : '96px' }}
             >
               {/* Circular SVG Gauge matching reference designs */}
               <div className="p-5 rounded-[24px] bg-white/5 border border-white/10 text-center space-y-4">
@@ -673,7 +680,8 @@ export function AIWorkspace() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="space-y-4"
+              className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-4"
+              style={{ paddingBottom: isDesktop ? '16px' : '96px' }}
             >
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-3">
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1"><BookOpen size={14} className="text-purple-400"/> Research Token</div>
@@ -724,7 +732,8 @@ export function AIWorkspace() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="space-y-4"
+              className="flex-1 overflow-y-auto p-4 scrollbar-hide space-y-4"
+              style={{ paddingBottom: isDesktop ? '16px' : '96px' }}
             >
               <form onSubmit={handleCreateAutomation} className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-3">
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5"><Bell size={14} className="text-orange-400" /> Create AI Automation</div>

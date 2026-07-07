@@ -56,14 +56,14 @@ export function HomeDashboard() {
     { icon: ArrowRightLeft, label: 'Swap', onClick: () => setActiveTab('swap'), active: false },
     { icon: Hexagon, label: 'Ritual AI', onClick: () => setActiveTab('ai'), active: true },
     { icon: ArrowDownToLine, label: 'Receive', onClick: () => setCurrentView('receive'), active: false },
-    { icon: Route, label: 'Bridge', onClick: () => setActiveTab('bridge'), active: false },
+    { icon: Route, label: 'Bridge', onClick: () => { setCurrentView('bridge'); setActiveTab('home'); }, active: false },
   ];
 
   const quickActionsDesktop = [
     { icon: ArrowUpRight, label: 'Send', onClick: () => setCurrentView('send') },
     { icon: ArrowDownToLine, label: 'Receive', onClick: () => setCurrentView('receive') },
     { icon: ArrowRightLeft, label: 'Swap', onClick: () => setActiveTab('swap') },
-    { icon: Route, label: 'Bridge', onClick: () => setActiveTab('bridge') },
+    { icon: Route, label: 'Bridge', onClick: () => { setCurrentView('bridge'); setActiveTab('home'); } },
   ];
 
   const recentTxs = transactions.slice(0, 4);

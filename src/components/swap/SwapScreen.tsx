@@ -16,7 +16,7 @@ import { useUIStore } from '../../stores/useUIStore';
 
 export function SwapScreen() {
   const { balance, usdcBalance, stakedUsdc, setBalances, addTransaction } = useWalletStore();
-  const { triggerToast, setCurrentView } = useUIStore();
+  const { triggerToast, setCurrentView, setActiveTab } = useUIStore();
   
   const [fromAsset, setFromAsset] = useState('RITUAL');
   const [toAsset, setToAsset] = useState('USDC');
@@ -103,7 +103,7 @@ export function SwapScreen() {
       <div className="px-4 pt-6 pb-2 sticky top-0 bg-[#090909]/80 backdrop-blur-xl z-50 border-b border-white/5 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-2">
           <button 
-            onClick={() => setCurrentView('main')} 
+            onClick={() => { setActiveTab('home'); setCurrentView('main'); }} 
             className="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-gray-400 hover:text-white transition"
           >
             <ArrowLeft size={16} />

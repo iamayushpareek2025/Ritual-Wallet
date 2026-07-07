@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search,
@@ -15,6 +15,18 @@ export function PortfolioScreen() {
   
   const [activeSubTab, setActiveSubTab] = useState<'tokens'|'nfts'|'defi'>('tokens');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const targetSubTab = localStorage.getItem('portfolio_target_subtab');
+    if (targetSubTab) {
+      if (targetSubTab === 'staking' || targetSubTab === 'defi') {
+        setActiveSubTab('defi');
+      } else if (targetSubTab === 'tokens' || targetSubTab === 'nfts') {
+        setActiveSubTab(targetSubTab);
+      }
+      localStorage.removeItem('portfolio_target_subtab');
+    }
+  }, []);
 
   const nativeNum = parseFloat(balance || "0");
   const usdcNum = parseFloat(usdcBalance || "0");

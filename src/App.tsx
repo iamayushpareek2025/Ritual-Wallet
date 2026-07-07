@@ -86,7 +86,7 @@ type TxRecord = { hash: string; to: string; amount: string; date: number; type: 
 type Vault = { mnemonic: string | null; accounts: string[]; };
 type AuthState = 'loading' | 'welcome' | 'unlock' | 'setup_password' | 'show_seed' | 'import_seed' | 'unlocked';
 type TabState = 'tokens' | 'nfts' | 'swap' | 'health' | 'activity' | 'ai';
-type SettingsView = 'main'|'accounts'|'security'|'networks'|'about'|'profile'|'preferences'|'addressBook'|'connectedApps';
+type SettingsView = 'main'|'accounts'|'security'|'network'|'networks'|'about'|'profile'|'preferences'|'addressBook'|'connectedApps'|'developer'|'notifications';
 type AgentRule = { id: string; label: string; condition: 'gas_below'; threshold: string; action: 'send'; to: string; amount: string; enabled: boolean; lastTriggered?: number; };
 
 type AddressBookEntry = { name: string; address: string; };
@@ -1762,7 +1762,8 @@ CRITICAL: If the user asks to GENERATE AN IMAGE, DRAW, or CREATE A PICTURE, you 
         disconnectApp, removeAddressBookEntry, startEditingAddressBook, handleSelectAddressBookContact,
         addAccount, importAccount,
         revealSeed, setRevealSeed, activePassword, setActivePassword, 
-        privateKey, setPrivateKey, address, setAddress, setBalance, setAuthState
+        privateKey, setPrivateKey, address, setAddress, setBalance, setAuthState,
+        isMainnet, setIsMainnet, agentRules, setAgentRules, txHistory, setTxHistory
       };
       return <AppShell><SettingsScreen appState={appState} /></AppShell>;
     }
